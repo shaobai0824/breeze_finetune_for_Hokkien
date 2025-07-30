@@ -53,17 +53,29 @@ class DataCollatorSpeechSeq2SeqWithPadding:
     def __call__(
         self, features: List[Dict[str, Union[List[int], torch.Tensor]]]
     ) -> Dict[str, torch.Tensor]:
+
+        # 1. 處理 input_features (音訊聲學特徵)
         input_features = [
             {"input_features": feature["input_features"]} for feature in features
         ]
         batch = self.processor.feature_extractor.pad(
             input_features, return_tensors="pt"
         )
+        # 2. 處理 labels (文本標籤)
         label_features = [{"input_ids": feature["labels"]} for feature in features]
         labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
+
+        # 3. 處理標籤中的 -100
+        # 將填充部分（attention_mask 為 0）的標籤替換為 -100。
+        # 在 PyTorch 的交叉熵損失函數中，-100 是一個特殊的 ignore_index，
+        # 意味著這些位置的損失不會被計算，這對於填充部分非常重要。
         labels = labels_batch["input_ids"].masked_fill(
             labels_batch.attention_mask.ne(1), -100
         )
+
+        # 4. 處理開頭的 BOS token (如果存在)
+        # 檢查所有序列的第一個 token 是否都是 BOS token。
+        # 這是針對某些模型（如 Whisper）的訓練習慣，模型在訓練時通常預期標籤不包含開頭的 BOS token。
         if (labels[:, 0] == self.processor.tokenizer.bos_token_id).all().cpu().item():
             labels = labels[:, 1:]
         batch["labels"] = labels
