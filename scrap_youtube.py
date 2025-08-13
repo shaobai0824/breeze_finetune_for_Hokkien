@@ -292,30 +292,88 @@ class YouTubeSubtitleClipper:
             except Exception as e:
                 print(f"pytube 下載失敗，改用 yt-dlp 後備方案。原因: {e}")
 
-            # 方案 B: 後備使用 yt-dlp 下載最佳音訊（優先選 m4a，無需轉檔以避免依賴 ffmpeg）
-            try:
-                cmd = [
+            # 方案 B: 後備使用 yt-dlp 下載最佳音訊（多組參數逐一嘗試）
+            ytdlp_attempts = [
+                [
                     sys.executable,
                     "-m",
                     "yt_dlp",
+                    "--no-playlist",
                     "-f",
                     "ba[ext=m4a]/bestaudio/best",
                     "-o",
                     str(self.output_path / "source_audio.%(ext)s"),
                     url,
-                ]
-                subprocess.run(cmd, check=True, capture_output=True)
+                ],
+                [
+                    sys.executable,
+                    "-m",
+                    "yt_dlp",
+                    "--no-playlist",
+                    "--force-ipv4",
+                    "--geo-bypass",
+                    "-f",
+                    "ba[ext=m4a]/bestaudio/best",
+                    "-o",
+                    str(self.output_path / "source_audio.%(ext)s"),
+                    url,
+                ],
+                [
+                    sys.executable,
+                    "-m",
+                    "yt_dlp",
+                    "--no-playlist",
+                    "--extractor-args",
+                    "youtube:player_client=android",
+                    "-f",
+                    "ba[ext=m4a]/bestaudio/best",
+                    "-o",
+                    str(self.output_path / "source_audio.%(ext)s"),
+                    url,
+                ],
+                [
+                    sys.executable,
+                    "-m",
+                    "yt_dlp",
+                    "--no-playlist",
+                    "--cookies-from-browser",
+                    "chrome",
+                    "-f",
+                    "ba[ext=m4a]/bestaudio/best",
+                    "-o",
+                    str(self.output_path / "source_audio.%(ext)s"),
+                    url,
+                ],
+                [
+                    sys.executable,
+                    "-m",
+                    "yt_dlp",
+                    "--no-playlist",
+                    "--cookies-from-browser",
+                    "edge",
+                    "-f",
+                    "ba[ext=m4a]/bestaudio/best",
+                    "-o",
+                    str(self.output_path / "source_audio.%(ext)s"),
+                    url,
+                ],
+            ]
 
-                # 下載後自動偵測實際副檔名
-                downloaded = list(self.output_path.glob("source_audio.*"))
-                if not downloaded:
-                    raise RuntimeError("yt-dlp 執行成功但未找到輸出檔案。")
-                self.source_media_path = downloaded[0]
-                print(f"來源媒體已成功下載至: {self.source_media_path}")
-                return True
-            except Exception as e:
-                print(f"yt-dlp 下載失敗: {e}")
-                return False
+            for idx, cmd in enumerate(ytdlp_attempts, start=1):
+                try:
+                    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                    downloaded = list(self.output_path.glob("source_audio.*"))
+                    if not downloaded:
+                        raise RuntimeError("yt-dlp 執行成功但未找到輸出檔案。")
+                    self.source_media_path = downloaded[0]
+                    print(f"來源媒體已成功下載至: {self.source_media_path} (yt-dlp 嘗試 #{idx})")
+                    return True
+                except subprocess.CalledProcessError as e:
+                    print(f"yt-dlp 嘗試 #{idx} 失敗，stderr:\n{e.stderr}\n---")
+                except Exception as e:
+                    print(f"yt-dlp 嘗試 #{idx} 例外：{e}\n---")
+
+            return False
         except Exception as e:
             print(f"下載媒體時發生錯誤: {e}")
             return False
