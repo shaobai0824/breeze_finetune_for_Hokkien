@@ -496,7 +496,7 @@ if __name__ == "__main__":
         print()
 
         # === 請修改以下參數 ===
-        MODEL_PATH = "shaobai880824/breeze-asr-25-chinese-full"
+        MODEL_PATH = "kfcc841024/RespiraAlly_ASR"
         TEST_CSV = "test_references_wav.csv"
         TEST_AUDIO_FOLDER = "debug_audio_wav"
         EMBEDDING_MODEL = "shibing624/text2vec-base-chinese"

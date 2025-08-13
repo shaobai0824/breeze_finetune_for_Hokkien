@@ -583,7 +583,7 @@ if __name__ == "__main__":
     print("=== 原生 M4A 檔案語義相似度評估 ===\n")
 
     # === 請修改以下參數 ===
-    MODEL_PATH = "shaobai880824/breeze-asr-25-chinese-full"
+    MODEL_PATH = "shaobai880824/breeze-asr-25-local-hokkien_v1"
     TEST_CSV = "test_references_example.csv"  # 使用原始 CSV
     TEST_AUDIO_FOLDER = "debug_audio"  # 使用原始 m4a 檔案
     EMBEDDING_MODEL = "shibing624/text2vec-base-chinese"

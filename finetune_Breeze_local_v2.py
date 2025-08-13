@@ -17,29 +17,39 @@ import numpy as np
 import pandas as pd
 import torch
 from datasets import Audio, Dataset, DatasetDict
-from transformers import (Seq2SeqTrainer, Seq2SeqTrainingArguments,
-                          WhisperFeatureExtractor,
-                          WhisperForConditionalGeneration, WhisperProcessor,
-                          WhisperTokenizer)
+from transformers import (
+    Seq2SeqTrainer,
+    Seq2SeqTrainingArguments,
+    WhisperFeatureExtractor,
+    WhisperForConditionalGeneration,
+    WhisperProcessor,
+    WhisperTokenizer,
+)
 
-from evaluate_with_semantic_similarity import SemanticSimilarityEvaluator
+from evaluate_with_semantic_similarity import (
+    SemanticSimilarityEvaluator,
+)  # 導入語義相似度評估器
 
 # ==============================================================================
 # 基本配置 - 本機版本
 # ==============================================================================
 
-MODEL_ID = "MediaTek-Research/Breeze-ASR-25"
-TRAIN_CSV = "metadata_train_fixed.csv"
-TEST_CSV = "metadata_test_fixed.csv"
-OUTPUT_DIR = "./breeze-asr-25-local-hokkian_v1"
+MODEL_ID = "shaobai880824/breeze-asr-25-local-hokkien_v1"
+DATA_CSV = (
+    "audio_1_converted_merged_zh.csv"  # <--- 修改這裡，指定您包含所有資料的 CSV 檔案
+)
+TEST_SPLIT_RATIO = 0.2  # 測試集佔總資料的比例 (例如 0.2 表示 20%)
+OUTPUT_DIR = "./breeze-asr-25-local-hokkien_v2"
 
 # 本機訓練參數
 QUICK_TEST_RATIO = 1  # 快速測試使用 10% 資料
-QUICK_MAX_STEPS = 5000  # 訓練步數
+QUICK_MAX_STEPS = 500  # 訓練步數
 
 # ==============================================================================
 # 全域定義 - 基於 train.py 成功模式
 # ==============================================================================
+
+# 為了效率，在此處初始化評估器，使其在整個訓練過程中僅載入一次
 print("⏳ 正在預先載入語義相似度評估模型...")
 semantic_evaluator = SemanticSimilarityEvaluator("shibing624/text2vec-base-chinese")
 print("✅ 語義相似度評估模型載入完成。")
@@ -87,10 +97,12 @@ def prepare_dataset_batched(batch, feature_extractor, tokenizer):
     """將一批音訊和文本資料即時轉換為模型輸入格式 - 基於 train.py 成功版本"""
     audio_list = batch["audio"]
     batch["input_features"] = feature_extractor(
-        [x["array"] for x in audio_list], sampling_rate=audio_list[0]["sampling_rate"]
+        # ## 修改點: 這裡不再需要擔心 audio_list[0] 是 None，因為壞資料已被過濾
+        [x["array"] for x in audio_list],
+        sampling_rate=audio_list[0]["sampling_rate"],
     ).input_features
     batch["labels"] = tokenizer(
-        batch["中文意譯"], max_length=448, truncation=True
+        batch["漢字"], max_length=448, truncation=True
     ).input_ids
     return batch
 
@@ -154,37 +166,44 @@ def setup_local_environment():
 
 
 def load_and_clean_data():
-    """載入並清理資料 - 本機版本"""
-    print("📊 載入資料...")
+    """載入、清理並從單一檔案拆分資料 - 本機版本"""
+    print("📊 載入、清理並拆分資料...")
 
-    if not Path(TRAIN_CSV).exists() or not Path(TEST_CSV).exists():
-        raise FileNotFoundError(f"找不到 {TRAIN_CSV} 或 {TEST_CSV}")
+    if not Path(DATA_CSV).exists():
+        raise FileNotFoundError(f"找不到指定的資料檔案: {DATA_CSV}")
 
-    train_df = pd.read_csv(TRAIN_CSV)
-    test_df = pd.read_csv(TEST_CSV)
+    df = pd.read_csv(DATA_CSV)
 
-    required_cols = ["file", "中文意譯"]
+    required_cols = ["檔案位置", "漢字"]
     for col in required_cols:
-        if col not in train_df.columns:
+        if col not in df.columns:
             raise ValueError(f"缺少必要欄位: {col}")
 
-    # 移除空值
-    train_df = train_df.dropna(subset=required_cols)
-    test_df = test_df.dropna(subset=required_cols)
+    # 在拆分前對整個資料集進行清理
+    df.dropna(subset=required_cols, inplace=True)
+    df = df[df["漢字"].str.len() < 200].copy()
 
-    # 限制文字長度
-    train_df = train_df[train_df["中文意譯"].str.len() < 200]
-    test_df = test_df[test_df["中文意譯"].str.len() < 200]
+    print(f"✅ 清理後總資料: {len(df)} 筆")
 
-    # 快速測試採樣
-    train_size = len(train_df)
-    test_size = len(test_df)
+    # 根據比例拆分訓練集和測試集
+    test_df = df.sample(frac=TEST_SPLIT_RATIO, random_state=42)
+    train_df = df.drop(test_df.index)
 
-    train_sample_size = max(1, int(train_size * QUICK_TEST_RATIO))
-    test_sample_size = max(1, int(test_size * QUICK_TEST_RATIO))
+    train_size_after_split = len(train_df)
+    test_size_after_split = len(test_df)
 
-    train_df = train_df.sample(n=train_sample_size, random_state=42)
-    test_df = test_df.sample(n=test_sample_size, random_state=42)
+    print(f"\n✅ 拆分後訓練資料: {train_size_after_split} 筆")
+    print(
+        f"✅ 拆分後測試資料: {test_size_after_split} 筆 (目標比例: {TEST_SPLIT_RATIO*100:.1f}%)"
+    )
+
+    # 基於拆分後的資料，再進行快速測試的採樣
+    if QUICK_TEST_RATIO < 1.0:
+        train_df = train_df.sample(frac=QUICK_TEST_RATIO, random_state=42)
+        test_df = test_df.sample(frac=QUICK_TEST_RATIO, random_state=42)
+        print(f"✅ 快速測試模式已啟用 (使用 {QUICK_TEST_RATIO*100}%)")
+        print(f"  - 使用訓練資料: {len(train_df)} 筆")
+        print(f"  - 使用測試資料: {len(test_df)} 筆")
 
     # 修正音訊檔案路徑 - 本機 /standard 目錄
     print("🔧 修正音訊檔案路徑...")
@@ -229,16 +248,11 @@ def load_and_clean_data():
         # 如果都不存在，返回原始路徑
         return path_str
 
-    train_df["file"] = train_df["file"].apply(fix_audio_path)
-    test_df["file"] = test_df["file"].apply(fix_audio_path)
+    train_df.loc[:, "檔案位置"] = train_df["檔案位置"].apply(fix_audio_path)
+    test_df.loc[:, "檔案位置"] = test_df["檔案位置"].apply(fix_audio_path)
 
-    sample_path = train_df["file"].iloc[0] if len(train_df) > 0 else ""
-    print(f"   範例路徑: {sample_path}")
-
-    print(f"✅ 原始訓練資料: {train_size} 筆")
-    print(f"✅ 原始測試資料: {test_size} 筆")
-    print(f"✅ 本機快速測試訓練資料: {len(train_df)} 筆 ({QUICK_TEST_RATIO*100}%)")
-    print(f"✅ 本機快速測試測試資料: {len(test_df)} 筆 ({QUICK_TEST_RATIO*100}%)")
+    sample_path = train_df["檔案位置"].iloc[0] if len(train_df) > 0 else ""
+    print(f"  範例路徑: {sample_path}")
 
     return train_df, test_df
 
@@ -274,13 +288,45 @@ def main():
     train_dataset = Dataset.from_pandas(train_df)
     test_dataset = Dataset.from_pandas(test_df)
 
-    # 轉換為音頻格式
-    train_dataset = train_dataset.cast_column("file", Audio(sampling_rate=16000))
-    test_dataset = test_dataset.cast_column("file", Audio(sampling_rate=16000))
+    # ## ==================== 修改點 START ==================== ##
+    # ## 修正欄位名稱並加入資料過濾步驟來根除 'NoneType' 錯誤
 
-    # 重命名欄位
-    train_dataset = train_dataset.rename_column("file", "audio")
-    test_dataset = test_dataset.rename_column("file", "audio")
+    print("🔊 轉換音訊格式並驗證資料...")
+    # 1. 轉換為音頻格式 (使用正確的欄位名 "檔案位置")
+    #    這一步會將無法讀取的音檔路徑轉換為 None
+    train_dataset = train_dataset.cast_column("檔案位置", Audio(sampling_rate=16000))
+    test_dataset = test_dataset.cast_column("檔案位置", Audio(sampling_rate=16000))
+
+    # 2. 重命名欄位以符合後續處理
+    train_dataset = train_dataset.rename_column("檔案位置", "audio")
+    test_dataset = test_dataset.rename_column("檔案位置", "audio")
+
+    # 3. 過濾掉值為 None 的無效音訊資料 (關鍵步驟)
+    def is_audio_valid(example):
+        return example["audio"] is not None
+
+    original_train_len = len(train_dataset)
+    original_test_len = len(test_dataset)
+
+    train_dataset = train_dataset.filter(is_audio_valid, num_proc=4)  # 可調整 num_proc
+    test_dataset = test_dataset.filter(is_audio_valid, num_proc=4)
+
+    filtered_train_len = len(train_dataset)
+    filtered_test_len = len(test_dataset)
+
+    if original_train_len != filtered_train_len:
+        print(
+            f"🧹 從訓練集中移除了 {original_train_len - filtered_train_len} 筆無效音訊。"
+        )
+    if original_test_len != filtered_test_len:
+        print(
+            f"🧹 從測試集中移除了 {original_test_len - filtered_test_len} 筆無效音訊。"
+        )
+
+    print(f"✅ 有效訓練資料: {filtered_train_len} 筆")
+    print(f"✅ 有效測試資料: {filtered_test_len} 筆")
+
+    # ## ===================== 修改點 END ===================== ##
 
     # 使用 .with_transform() 確保記憶體穩定 - 基於 train.py 成功模式
     prepare_fn = partial(
@@ -289,6 +335,7 @@ def main():
         tokenizer=processor.tokenizer,
     )
 
+    # ## 修改點: 使用已過濾的 dataset
     train_dataset = train_dataset.with_transform(prepare_fn)
     test_dataset = test_dataset.with_transform(prepare_fn)
 
@@ -303,44 +350,44 @@ def main():
     training_args = Seq2SeqTrainingArguments(
         output_dir=OUTPUT_DIR,
         # 批次大小設定 - 基於 train.py 成功模式
-        per_device_train_batch_size=2,  # 使用 train.py 的設定
-        per_device_eval_batch_size=2,  # 使用 train.py 的設定
-        gradient_accumulation_steps=8,  # 使用 train.py 的設定
+        per_device_train_batch_size=1,  # 使用 train.py 的設定
+        per_device_eval_batch_size=1,  # 使用 train.py 的設定
+        gradient_accumulation_steps=16,  # 使用 train.py 的設定
         # 學習率和步數設定
         learning_rate=1e-5,
-        warmup_steps=500,
+        warmup_steps=100,
         max_steps=QUICK_MAX_STEPS,
         # 評估設定
         eval_strategy="steps",
-        eval_steps=500,
+        eval_steps=100,
         predict_with_generate=True,
         generation_max_length=64,  # 使用 train.py 的設定
         # 保存設定
-        save_steps=500,
+        save_steps=100,
         save_total_limit=2,
         load_best_model_at_end=True,
-        metric_for_best_model="semantic_similarity",
-        greater_is_better=True,
+        metric_for_best_model="semantic_similarity",  # <-- 改為語義相似度
+        greater_is_better=True,  # <-- 分數越高越好
         # 優化設定 - 基於 train.py 成功模式
         gradient_checkpointing=False,
         fp16=False,  # 使用 train.py 的設定
         dataloader_num_workers=0,  # 使用 train.py 的設定
         # 其他設定
-        logging_steps=250,
+        logging_steps=10,
         report_to=[],
         remove_unused_columns=False,
-        push_to_hub=True,  # 本機版本不上傳
+        push_to_hub=True,  # ## 修改點：本機版本預設不上傳到Hugging Face Hub
     )
 
     # 創建訓練器 - 基於 train.py 成功模式
     trainer = Seq2SeqTrainer(
         args=training_args,
         model=model,
-        train_dataset=train_dataset,
-        eval_dataset=test_dataset,
+        train_dataset=train_dataset,  # ## 修改點: 使用已過濾的 dataset
+        eval_dataset=test_dataset,  # ## 修改點: 使用已過濾的 dataset
         data_collator=data_collator,
         compute_metrics=compute_metrics_fn,
-        tokenizer=processor.tokenizer,
+        tokenizer=processor.tokenizer,  # <-- 修正：應傳遞 tokenizer
     )
 
     # 顯示訓練資訊
@@ -352,14 +399,14 @@ def main():
     )
 
     print(f"\n📈 本機訓練版本資訊:")
-    print(f"   模型參數: {total_params:,}")
-    print(f"   可訓練參數: {trainable_params:,}")
-    print(f"   有效批次: {effective_batch}")
-    print(f"   最大步數: {QUICK_MAX_STEPS}")
-    print(f"   學習率: {training_args.learning_rate}")
-    print(f"   評估頻率: 每 {training_args.eval_steps} 步")
-    print(f"   使用 train.py 成功模式")
-    print(f"   檔案位置: /standard 目錄")
+    print(f"  模型參數: {total_params:,}")
+    print(f"  可訓練參數: {trainable_params:,}")
+    print(f"  有效批次: {effective_batch}")
+    print(f"  最大步數: {QUICK_MAX_STEPS}")
+    print(f"  學習率: {training_args.learning_rate}")
+    print(f"  評估頻率: 每 {training_args.eval_steps} 步")
+    print(f"  使用 train.py 成功模式")
+    print(f"  檔案位置: /standard 目錄")
 
     print("\n🚀 開始本機訓練...")
     try:
@@ -372,7 +419,10 @@ def main():
 
         # 最終評估
         metrics = trainer.evaluate()
-        print(f"🎯 最終 WER: {metrics.get('eval_wer', 'N/A'):.2f}%")
+        final_metric_name = f"eval_{training_args.metric_for_best_model}"
+        print(
+            f"🎯 最終 {training_args.metric_for_best_model}: {metrics.get(final_metric_name, 'N/A'):.4f}"
+        )
 
         print(f"\n💾 本機訓練模型已保存至: {OUTPUT_DIR}")
 

@@ -89,11 +89,11 @@ if __name__ == "__main__":
     # 您訓練好的模型的本地資料夾路徑
     # 這應該是您在 TrainingArguments 中設定的 output_dir
     MY_FINE_TUNED_MODEL_PATH = (
-        "shaobai880824/breeze-asr-25-final-chinese"  # 或者 prototype 版本
+        "shaobai880824/breeze-asr-25-local-hokkien_v1"  # 或者 prototype 版本
     )
 
     # 原始模型的名稱
-    ORIGINAL_MODEL_NAME = "openai/whisper-small"
+    ORIGINAL_MODEL_NAME = "shaobai880824/breeze-asr-25-chinese-full"
 
     # 您用來測試的音訊檔案路徑
     TEST_AUDIO_FILE = (
