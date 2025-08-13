@@ -17,14 +17,10 @@ import numpy as np
 import pandas as pd
 import torch
 from datasets import Audio, Dataset, DatasetDict
-from transformers import (
-    Seq2SeqTrainer,
-    Seq2SeqTrainingArguments,
-    WhisperFeatureExtractor,
-    WhisperForConditionalGeneration,
-    WhisperProcessor,
-    WhisperTokenizer,
-)
+from transformers import (Seq2SeqTrainer, Seq2SeqTrainingArguments,
+                          WhisperFeatureExtractor,
+                          WhisperForConditionalGeneration, WhisperProcessor,
+                          WhisperTokenizer)
 
 # ==============================================================================
 # 基本配置
@@ -318,7 +314,7 @@ def main():
         eval_dataset=test_dataset,
         data_collator=data_collator,
         compute_metrics=compute_metrics_fn,
-        tokenizer=processor.feature_extractor,
+        tokenizer=processor.tokenizer,
     )
 
     # 顯示訓練資訊
